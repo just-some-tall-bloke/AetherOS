@@ -21,24 +21,60 @@ jobs:
 
       - name: Install Ninja
         shell: pwsh
-        run: choco install ninja -y --no-progress
+        run: |
+          choco install ninja -y --no-progress
+          ninja --version
 
       - name: Install Flex and Bison
         shell: pwsh
         run: |
-          $url = "https://svn.reactos.org/storage/vperevertkin/flexbison.7z"
-          Invoke-WebRequest $url -OutFile flexbison.7z
-          New-Item -ItemType Directory -Force bin | Out-Null
-          7z x flexbison.7z "-obin" -y
-          "BISON_PKGDATADIR=$env:GITHUB_WORKSPACE\bin\share\bison" >> $env:GITHUB_ENV
-          "M4=$env:GITHUB_WORKSPACE\bin\m4.exe" >> $env:GITHUB_ENV
-          "$env:GITHUB_WORKSPACE\bin" >> $env:GITHUB_PATH
+          choco install winflexbison3 -y --no-progress
+
+          $tools = Get-ChildItem `
+            "C:\ProgramData\chocolatey" `
+            -Recurse -Filter win_bison.exe |
+            Select-Object -First 1
+
+          if (!$tools) {
+            throw "win_bison.exe was not found"
+          }
+
+          $bin = $tools.Directory.FullName
+
+          Copy-Item "$bin\win_bison.exe" `
+            "$bin\bison.exe" -Force
+
+          Copy-Item "$bin\win_flex.exe" `
+            "$bin\flex.exe" -Force
+
+          $bin >> $env:GITHUB_PATH
+
+          & "$bin\bison.exe" --version
+          & "$bin\flex.exe" --version
 
       - name: Activate MSVC x86 compiler
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: amd64_x86
           toolset: '14'
+
+      - name: Verify build tools
+        shell: pwsh
+        run: |
+          Write-Host "Checking compiler..."
+          cl
+
+          Write-Host "Checking CMake..."
+          cmake --version
+
+          Write-Host "Checking Ninja..."
+          ninja --version
+
+          Write-Host "Checking Bison..."
+          bison --version
+
+          Write-Host "Checking Flex..."
+          flex --version
 
       - name: Configure AetherOS
         shell: pwsh
@@ -52,16 +88,28 @@ jobs:
 
       - name: Build bootable ISO
         shell: pwsh
-        run: cmake --build build --target bootcd --parallel 4
+        run: |
+          cmake --build build `
+            --target bootcd `
+            --parallel 4
 
       - name: Verify ISO
         shell: pwsh
         run: |
-          if (!(Test-Path "build/bootcd.iso")) {
+          $iso = "build/bootcd.iso"
+
+          if (!(Test-Path $iso)) {
             throw "AetherOS ISO was not generated"
           }
-          Get-Item "build/bootcd.iso" |
-            Select-Object Name, Length
+
+          $file = Get-Item $iso
+
+          Write-Host "AetherOS ISO generated"
+          Write-Host "File: $($file.Name)"
+          Write-Host "Size: $($file.Length) bytes"
+
+          Get-FileHash $iso -Algorithm SHA256 |
+            Format-List
 
       - name: Upload AetherOS ISO
         uses: actions/upload-artifact@v4
